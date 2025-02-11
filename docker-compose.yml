@@ -3,5 +3,5 @@ services:
     web:
         build: .
         ports:
-            - "80:32323"
-        command: ["dotnet", "ascom.alpaca.simulators.dll", "--urls=http://*:32323"]
+            - "32323:32323"
+        command: ["dotnet", "ascom.alpaca.simulators.dll", "--urls=http://0.0.0.0:32323"]
