@@ -45,3 +45,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
 COPY --from=build /app/ASCOM.Alpaca.Simulators/out ./
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 32323
+EXPOSE 32227/udp
+
+CMD ["dotnet", "ascom.alpaca.simulators.dll", "--urls=http://0.0.0.0:32323"]
