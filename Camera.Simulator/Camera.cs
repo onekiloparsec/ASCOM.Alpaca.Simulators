@@ -119,6 +119,9 @@ namespace ASCOM.Simulators
         private const string STR_HasSubExposure = "HasSubExposure";
         private const string STR_SubExposureInterval = "SubExposureInterval";
         private const string STR_UseCustomImage = "UseCustomImage";
+        private const string STR_ImageBaseUrl = "ImageBaseUrl";
+        private const string STR_ImageQueryFormat = "ImageQueryFormat";
+        private const string STR_UseRemoteImage = "UseRemoteImage";
 
         // Cooler configuration strings
         private const string STR_CoolerAmbientTemperature = "CoolerAmbientTemperature";
