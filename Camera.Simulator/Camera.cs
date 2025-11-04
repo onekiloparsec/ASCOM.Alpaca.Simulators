@@ -315,6 +315,8 @@ namespace ASCOM.Simulators
         // SetFanSpeed, GetFanSpeed. These commands control a hypothetical CCD camera heat sink fan, range 0 (off) to 3 (full speed)
         private int fanMode;
 
+        private static readonly System.Net.Http.HttpClient httpClient = new System.Net.Http.HttpClient();
+
         #endregion Internal properties
 
         #region Enums
@@ -2664,6 +2666,14 @@ namespace ASCOM.Simulators
                 imagePath = Path.Combine(fullPath, @"m42-800x600.jpg");
             }
 
+            bool useRemoteImage = Convert.ToBoolean(Profile.GetValue(STR_UseRemoteImage, "true"), CultureInfo.InvariantCulture);
+
+            string imageBaseUrl = Profile.GetValue(STR_ImageBaseUrl, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits");
+            _useRemoteImage = useRemoteImage && !string.IsNullOrWhiteSpace(imageBaseUrl);
+            _imageBaseUrl = imageBaseUrl?.TrimEnd('/');
+            _imageQueryFormat = "?hips=CDS/P/DSS2/color&ra={ra}&dec={dec}&fov=0.5&width={width}&height={height}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg";
+            Log.log.Log(LogLevel.Information, $"UseRemoteImage={_useRemoteImage}, BaseUrl={_imageBaseUrl}, QueryFormat={_imageQueryFormat}");
+
             applyNoise = Convert.ToBoolean(Profile.GetValue(STR_ApplyNoise, "false"), CultureInfo.InvariantCulture);
 
             canPulseGuide = Convert.ToBoolean(Profile.GetValue(STR_CanPulseGuide, "false"), CultureInfo.InvariantCulture);
@@ -2834,6 +2844,11 @@ namespace ASCOM.Simulators
             }
 
             SaveCoolerToProfile(); // Save the cooler profile as well
+
+            // Persist dynamic image settings too
+            Profile.WriteValue(STR_UseRemoteImage, _useRemoteImage.ToString(CultureInfo.InvariantCulture));
+            if (!string.IsNullOrWhiteSpace(_imageBaseUrl)) Profile.WriteValue(STR_ImageBaseUrl, _imageBaseUrl);
+            if (!string.IsNullOrWhiteSpace(_imageQueryFormat)) Profile.WriteValue(STR_ImageQueryFormat, _imageQueryFormat);
         }
 
         public void ResetSettings()
@@ -3066,7 +3081,18 @@ namespace ASCOM.Simulators
 
             try
             {
-                bmp = Image.Load<Rgba32>(imagePath);
+                Log.log.Log(LogLevel.Information, $"Trying DynamicImageAsync...");
+                Image<Rgba32> loaded = TryLoadDynamicImageAsync().GetAwaiter().GetResult();
+                if (loaded != null)
+                {
+                    Log.log.Log(LogLevel.Information,  $"Successful DynamicImageAsync...");
+                    bmp = loaded;
+                }
+                else
+                {
+                    Log.log.Log(LogLevel.Information, $"Failed DynamicImageAsync...");
+                    bmp = Image.Load<Rgba32>(imagePath);
+                }
 
                 // x0 = bayerOffsetX;
                 // x1 = (bayerOffsetX + 1) & 1;
@@ -3359,6 +3385,12 @@ namespace ASCOM.Simulators
 
         #endregion Private
 
+        // === Dynamic Remote Image Support ===
+        // Backing fields for profile-configured remote fetching
+        private bool _useRemoteImage;
+        private string _imageBaseUrl;
+        private string _imageQueryFormat;
+
         /// <summary>
         /// Public helpers to set pointing before starting an exposure (optional).
         /// If not set, defaults will be used and remote fetch will still work if enabled.
@@ -3369,6 +3401,57 @@ namespace ASCOM.Simulators
             lastDeclinationDeg = declinationDeg;
 
             Log.LogMessage("SetPointing", $"Pointing update -> RA:{rightAscensionHours}h DEC:{declinationDeg}°");
+        }
+
+        /// <summary>
+        /// Builds a URL using base + query format and current camera/image parameters.
+        /// Supported tokens in the query format:
+        /// {ra} hours, {dec} deg, {fov} deg, {w} pixels, {h} pixels, {binX}, {binY}
+        /// </summary>
+        private Uri BuildImageUri()
+        {
+            string q = _imageQueryFormat
+                .Replace("{ra}", Uri.EscapeDataString(lastRightAscensionDeg.ToString(CultureInfo.InvariantCulture)))
+                .Replace("{dec}", Uri.EscapeDataString(lastDeclinationDeg.ToString(CultureInfo.InvariantCulture)))
+                .Replace("{width}", Uri.EscapeDataString(cameraXSize.ToString(CultureInfo.InvariantCulture)))
+                .Replace("{height}", Uri.EscapeDataString(cameraYSize.ToString(CultureInfo.InvariantCulture)));
+//                .Replace("{binX}", Uri.EscapeDataString(binX.ToString(CultureInfo.InvariantCulture)))
+//                .Replace("{binY}", Uri.EscapeDataString(binY.ToString(CultureInfo.InvariantCulture)));
+
+            string url = $"{_imageBaseUrl}{q}";
+            return new Uri(url, UriKind.Absolute);
+        }
+
+        /// <summary>
+        /// Attempts to load a remote image if enabled; returns null on any failure.
+        /// The remote image should be a standard format (e.g. PNG/JPG) and will be resized/snapped
+        /// by the existing pipeline through sampling.
+        /// </summary>
+        private async Task<Image<Rgba32>> TryLoadDynamicImageAsync()
+        {
+            if (!_useRemoteImage) return null;
+
+            try
+            {
+                var uri = BuildImageUri();
+                Log.log.Log(LogLevel.Information, $"DynamicImage Fetching: {uri}");
+                using var resp = await httpClient.GetAsync(uri, System.Net.Http.HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    Log.log.Log(LogLevel.Information, $"DynamicImage Remote fetch failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                    return null;
+                }
+
+                await using var s = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                // ImageSharp can load directly from stream
+                var img = await Image.LoadAsync<Rgba32>(s).ConfigureAwait(false);
+                return img;
+            }
+            catch (Exception ex)
+            {
+                Log.log.Log(LogLevel.Information, $"DynamicImage Exception fetching remote image: {ex.Message}");
+                return null;
+            }
         }
 
         #region Checks
