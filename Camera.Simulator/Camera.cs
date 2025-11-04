@@ -1735,7 +1735,7 @@ namespace ASCOM.Simulators
         /// <exception cref=" System.Exception">the exposure cannot be started for any reason, such as a hardware or communications error</exception>
         public void StartExposure(double Duration, bool Light)
         {
-            Log.LogMessage("StartExposure", "Duration {0}, Light {1}", Duration, Light);
+            Log.log.Log(LogLevel.Information, $"StartExposure: Duration {Duration}, Light {Light}");
             CheckConnected("Can't set StartExposure when not connected");
             // check the duration, light frames only
             if (Light && (Duration > exposureMax || Duration < exposureMin))
