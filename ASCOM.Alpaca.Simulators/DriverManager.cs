@@ -10,6 +10,12 @@ namespace ASCOM.Alpaca.Simulators
             var dev = new ASCOM.Simulators.Camera(DeviceID, Logging.Log, new XMLProfile(ServerSettings.SettingsFolderName, DeviceManager.Camera, (uint)DeviceID));
 
             DeviceManager.LoadCamera(DeviceID, dev, dev.DeviceName, dev.UniqueID);
+
+            // If a matching telescope already exists, attach now
+            if (DeviceManager.Telescopes.TryGetValue(DeviceID, out var telObj))
+            {
+                (telObj as ASCOM.Simulators.Telescope)?.AttachCamera(dev);
+            }
         }
 
         internal static void LoadCoverCalibrator(int DeviceID)
@@ -64,6 +70,12 @@ namespace ASCOM.Alpaca.Simulators
         {
             var dev = new ASCOM.Simulators.Telescope(DeviceID, Logging.Log, new XMLProfile(ServerSettings.SettingsFolderName, DeviceManager.Telescope, (uint)DeviceID));
             DeviceManager.LoadTelescope(DeviceID, dev, dev.DeviceName, dev.UniqueID);
+
+            // If a matching camera already exists, attach now
+            if (DeviceManager.Cameras.TryGetValue(DeviceID, out var camObj))
+            {
+                dev.AttachCamera(camObj as ASCOM.Simulators.Camera);
+            }
         }
 
         /// <summary>
