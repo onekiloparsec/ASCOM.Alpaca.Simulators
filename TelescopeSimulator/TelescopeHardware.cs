@@ -319,6 +319,10 @@ namespace ASCOM.Simulators
         /// </summary>
         public static Vector rateMoveAxes = new Vector();
 
+        // Callback to inform consumers (e.g., Camera) about pointing changes.
+        // Signature: ra (hours), dec (deg), fov (deg)
+        public static Action<double, double> OnPointingChanged;
+
         #endregion Public variables
 
         #region Enums
@@ -644,7 +648,7 @@ namespace ASCOM.Simulators
                 TL.LogError($"TelescopeHardware Initialiser Exception: {ex.Message}");
             }
         }
-
+        
         /// <summary>
         /// This was stored by a Form in the old simulator. For now stored by this function.
         /// </summary>
@@ -2295,8 +2299,36 @@ namespace ASCOM.Simulators
 
             altAzm = MountFunctions.ConvertAxesToAltAzm(mountAxes);
             currentRaDec = MountFunctions.ConvertAxesToRaDec(mountAxes);
+            
+            NotifyPointingChanged();
         }
 
+        /// <summary>
+        /// Notify upstream of the change of position.
+        /// </summary>
+        private static void NotifyPointingChanged()
+        {
+            try
+            {
+                var cb = OnPointingChanged;
+                if (cb == null)
+                {
+                    LogMessage("NotifyPointingChanged", "No subscriber (OnPointingChanged is null)");
+                    return;
+                }
+
+                // Current telescope pointing
+                double raHours = currentRaDec.X; // 0..24
+                double decDeg = currentRaDec.Y;  // -90..+90
+
+                cb(raHours, decDeg);
+            }
+            catch (Exception ex)
+            {
+                LogMessage("NotifyPointingChanged", $"Exception: {ex.Message}");
+            }
+        }
+        
         #endregion Helper Functions
     }
 }
