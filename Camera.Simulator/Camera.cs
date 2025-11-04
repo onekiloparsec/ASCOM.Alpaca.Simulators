@@ -1032,8 +1032,6 @@ namespace ASCOM.Simulators
                 Log.LogMessage("Connected", "set {0}", value);
                 if (value & !connected) // We are connecting and are not already connected
                 {
-                    ReadImageFile();
-
                     // Restore valid settings if necessary
                     imageReady = false;
                     //  Bin X test
@@ -1852,6 +1850,8 @@ namespace ASCOM.Simulators
                     }
                 }
             }
+
+            ReadImageFile();
 
             if (exposureTimer == null)
             {
