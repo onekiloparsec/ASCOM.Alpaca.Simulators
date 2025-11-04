@@ -296,6 +296,9 @@ namespace ASCOM.Simulators
         internal bool connected = false;
         internal CameraState cameraState = CameraState.Idle;
 
+        private double lastRightAscensionDeg; // 0-360
+        private double lastDeclinationDeg;      // -90..+90
+
         private int[,] imageArray;
         private object[,] imageArrayVariant;
         private int[,,] imageArrayColour;
@@ -3355,6 +3358,18 @@ namespace ASCOM.Simulators
         }
 
         #endregion Private
+
+        /// <summary>
+        /// Public helpers to set pointing before starting an exposure (optional).
+        /// If not set, defaults will be used and remote fetch will still work if enabled.
+        /// </summary>
+        public void SetPointing(double rightAscensionHours, double declinationDeg)
+        {
+            lastRightAscensionDeg = rightAscensionHours * 15;
+            lastDeclinationDeg = declinationDeg;
+
+            Log.LogMessage("SetPointing", $"Pointing update -> RA:{rightAscensionHours}h DEC:{declinationDeg}°");
+        }
 
         #region Checks
 

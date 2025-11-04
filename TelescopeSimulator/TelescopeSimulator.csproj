@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OmniSim.Tools\OmniSim.Tools.csproj" />
+    <ProjectReference Include="..\Camera.Simulator\CameraSimulator.csproj" />
     <ProjectReference Include="..\WindowsBase.Vector\WindowsBase.Vector\WindowsBase.Vector.csproj" />
   </ItemGroup>
 

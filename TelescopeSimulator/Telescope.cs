@@ -64,6 +64,9 @@ namespace ASCOM.Simulators
 
         private const string UNIQUE_ID_PROFILE_NAME = "UniqueID";
 
+        // Keep a reference to the camera or a way to access it.
+        private ASCOM.Simulators.Camera _camera;
+
         private ILogger Logger;
 
         //
@@ -1101,6 +1104,8 @@ namespace ASCOM.Simulators
             }
 
             SharedResources.TrafficEnd("done");
+            
+            TryUpdateCameraPointing();
         }
 
         public void SlewToCoordinatesAsync(double RightAscension, double Declination)
@@ -1138,6 +1143,8 @@ namespace ASCOM.Simulators
             }
 
             SharedResources.TrafficEnd("done");
+            
+            TryUpdateCameraPointing();
         }
 
         public void SlewToTargetAsync()
@@ -1593,6 +1600,41 @@ namespace ASCOM.Simulators
             {
                 SharedResources.TrafficEnd(string.Format(CultureInfo.CurrentCulture, "{0} not possible when tracking is {1}", method, TelescopeHardware.Tracking));
                 throw new ASCOM.InvalidOperationException(string.Format("{0} is not allowed when tracking is {1}", method, TelescopeHardware.Tracking));
+            }
+        }
+
+        public void AttachCamera(ASCOM.Simulators.Camera camera)
+        {
+            _camera = camera;
+            Logger.LogInformation($"Telescope {DeviceNumber}: Camera attached: {_camera?.GetType().FullName}");
+
+            TelescopeHardware.OnPointingChanged = (raHours, decDeg) =>
+            {
+                try {
+                    _camera.SetPointing(raHours, decDeg);
+                }
+                catch (Exception ex)
+                {
+                    TelescopeHardware.LogMessage("OnPointingChanged", $"Failed: {ex.Message}");
+                }
+            };
+
+            // Push initial pointing
+            TelescopeHardware.OnPointingChanged?.Invoke(RightAscension, Declination);
+        }
+
+        // Centralized helper to send pointing to the camera
+        private void TryUpdateCameraPointing()
+        {
+            try
+            {
+                if (_camera == null) return;
+                
+                _camera.SetPointing(RightAscension, Declination);
+            }
+            catch (Exception ex)
+            {
+                TelescopeHardware.LogMessage("TryUpdateCameraPointing", $"SetPointing failed: {ex.Message}");
             }
         }
 
