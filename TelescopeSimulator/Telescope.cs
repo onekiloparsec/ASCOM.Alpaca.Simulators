@@ -64,8 +64,8 @@ namespace ASCOM.Simulators
 
         private const string UNIQUE_ID_PROFILE_NAME = "UniqueID";
 
-        // Keep a reference to the camera or a way to access it.
-        private ASCOM.Simulators.Camera _camera;
+        // Cameras whose pointing should follow this telescope (e.g. main camera + guiding camera).
+        private readonly System.Collections.Generic.List<ASCOM.Simulators.Camera> _cameras = new();
 
         private ILogger Logger;
 
@@ -1605,17 +1605,24 @@ namespace ASCOM.Simulators
 
         public void AttachCamera(ASCOM.Simulators.Camera camera)
         {
-            _camera = camera;
-            Logger.LogInformation($"Telescope {DeviceNumber}: Camera attached: {_camera?.GetType().FullName}");
+            if (camera == null || _cameras.Contains(camera)) return;
+            _cameras.Add(camera);
+            Logger.LogInformation($"Telescope {DeviceNumber}: Camera attached ({_cameras.Count} total): {camera.GetType().FullName}");
 
+            // Single shared callback that fans out to every attached camera.
+            // Reassigning is fine — we always dispatch to the full _cameras list.
             TelescopeHardware.OnPointingChanged = (raHours, decDeg) =>
             {
-                try {
-                    _camera.SetPointing(raHours, decDeg);
-                }
-                catch (Exception ex)
+                foreach (var cam in _cameras)
                 {
-                    TelescopeHardware.LogMessage("OnPointingChanged", $"Failed: {ex.Message}");
+                    try
+                    {
+                        cam.SetPointing(raHours, decDeg);
+                    }
+                    catch (Exception ex)
+                    {
+                        TelescopeHardware.LogMessage("OnPointingChanged", $"Failed: {ex.Message}");
+                    }
                 }
             };
 
@@ -1623,18 +1630,20 @@ namespace ASCOM.Simulators
             TelescopeHardware.OnPointingChanged?.Invoke(RightAscension, Declination);
         }
 
-        // Centralized helper to send pointing to the camera
+        // Centralized helper to send pointing to every attached camera.
         private void TryUpdateCameraPointing()
         {
-            try
+            if (_cameras.Count == 0) return;
+            foreach (var cam in _cameras)
             {
-                if (_camera == null) return;
-                
-                _camera.SetPointing(RightAscension, Declination);
-            }
-            catch (Exception ex)
-            {
-                TelescopeHardware.LogMessage("TryUpdateCameraPointing", $"SetPointing failed: {ex.Message}");
+                try
+                {
+                    cam.SetPointing(RightAscension, Declination);
+                }
+                catch (Exception ex)
+                {
+                    TelescopeHardware.LogMessage("TryUpdateCameraPointing", $"SetPointing failed: {ex.Message}");
+                }
             }
         }
 

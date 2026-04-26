@@ -11,11 +11,16 @@ namespace ASCOM.Alpaca.Simulators
 
             DeviceManager.LoadCamera(DeviceID, dev, dev.DeviceName, dev.UniqueID);
 
-            // If a matching telescope already exists, attach now
-            if (DeviceManager.Telescopes.TryGetValue(DeviceID, out var telObj))
+            // Attach to a telescope so the camera receives live pointing updates
+            // (and hence correct RA/Dec for dynamic image fetching). Prefer a
+            // telescope sharing the same DeviceID; otherwise fall back to the
+            // primary telescope (DeviceID 0). This lets a second camera (e.g. a
+            // guiding camera) follow the same mount as the main camera.
+            if (!DeviceManager.Telescopes.TryGetValue(DeviceID, out var telObj))
             {
-                (telObj as ASCOM.Simulators.Telescope)?.AttachCamera(dev);
+                DeviceManager.Telescopes.TryGetValue(0, out telObj);
             }
+            (telObj as ASCOM.Simulators.Telescope)?.AttachCamera(dev);
         }
 
         internal static void LoadCoverCalibrator(int DeviceID)
@@ -111,10 +116,18 @@ namespace ASCOM.Alpaca.Simulators
             var dev = new ASCOM.Simulators.Telescope(DeviceID, Logging.Log, new XMLProfile(ServerSettings.SettingsFolderName, DeviceManager.Telescope, (uint)DeviceID));
             DeviceManager.LoadTelescope(DeviceID, dev, dev.DeviceName, dev.UniqueID);
 
-            // If a matching camera already exists, attach now
-            if (DeviceManager.Cameras.TryGetValue(DeviceID, out var camObj))
+            // Attach every already-loaded camera that should follow this telescope.
+            // The primary telescope (DeviceID 0) acts as the catch-all mount: any
+            // camera without a same-DeviceID telescope follows it. Cameras whose
+            // DeviceID matches this telescope's also attach here.
+            foreach (var (camDeviceID, camObj) in DeviceManager.Cameras)
             {
-                dev.AttachCamera(camObj as ASCOM.Simulators.Camera);
+                bool sameDevice = camDeviceID == DeviceID;
+                bool fallbackToPrimary = DeviceID == 0 && !DeviceManager.Telescopes.ContainsKey(camDeviceID);
+                if (sameDevice || fallbackToPrimary)
+                {
+                    dev.AttachCamera(camObj as ASCOM.Simulators.Camera);
+                }
             }
         }
 
