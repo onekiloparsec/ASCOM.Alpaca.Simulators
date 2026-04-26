@@ -122,6 +122,7 @@ namespace ASCOM.Simulators
         private const string STR_ImageBaseUrl = "ImageBaseUrl";
         private const string STR_ImageQueryFormat = "ImageQueryFormat";
         private const string STR_UseRemoteImage = "UseRemoteImage";
+        private const string STR_RemoteImageTimeoutSeconds = "RemoteImageTimeoutSeconds";
 
         // Cooler configuration strings
         private const string STR_CoolerAmbientTemperature = "CoolerAmbientTemperature";
@@ -2669,13 +2670,19 @@ namespace ASCOM.Simulators
                 imagePath = Path.Combine(fullPath, @"m42-800x600.jpg");
             }
 
+            if (!File.Exists(imagePath))
+            {
+                Log.log.Log(LogLevel.Warning, $"Local fallback image not found at {imagePath} — fallback will fail");
+            }
+
             bool useRemoteImage = Convert.ToBoolean(Profile.GetValue(STR_UseRemoteImage, "true"), CultureInfo.InvariantCulture);
 
             string imageBaseUrl = Profile.GetValue(STR_ImageBaseUrl, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits");
             _useRemoteImage = useRemoteImage && !string.IsNullOrWhiteSpace(imageBaseUrl);
             _imageBaseUrl = imageBaseUrl?.TrimEnd('/');
             _imageQueryFormat = "?hips=CDS/P/DSS2/color&ra={ra}&dec={dec}&fov=0.5&width={width}&height={height}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg";
-            Log.log.Log(LogLevel.Information, $"UseRemoteImage={_useRemoteImage}, BaseUrl={_imageBaseUrl}, QueryFormat={_imageQueryFormat}");
+            _remoteImageTimeoutSeconds = Math.Max(1, Convert.ToInt32(Profile.GetValue(STR_RemoteImageTimeoutSeconds, "10"), CultureInfo.InvariantCulture));
+            Log.log.Log(LogLevel.Information, $"UseRemoteImage={_useRemoteImage}, BaseUrl={_imageBaseUrl}, TimeoutSeconds={_remoteImageTimeoutSeconds}, QueryFormat={_imageQueryFormat}");
 
             applyNoise = Convert.ToBoolean(Profile.GetValue(STR_ApplyNoise, "false"), CultureInfo.InvariantCulture);
 
@@ -3082,26 +3089,39 @@ namespace ASCOM.Simulators
                 if (imageData == null) imageData = new float[cameraXSize, cameraYSize, 3];
             }
 
+            Log.log.Log(LogLevel.Information, $"Trying DynamicImageAsync...");
+            Image<Rgba32> loaded = null;
             try
             {
-                Log.log.Log(LogLevel.Information, $"Trying DynamicImageAsync...");
-                Image<Rgba32> loaded = TryLoadDynamicImageAsync().GetAwaiter().GetResult();
-                if (loaded != null)
+                loaded = TryLoadDynamicImageAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Log.log.Log(LogLevel.Warning, $"DynamicImage remote fetch threw: {ex.Message}");
+            }
+
+            if (loaded != null)
+            {
+                Log.log.Log(LogLevel.Information, $"Successful DynamicImageAsync ({loaded.Width}x{loaded.Height})");
+                bmp = loaded;
+            }
+            else
+            {
+                Log.log.Log(LogLevel.Information, $"Falling back to local image: {imagePath}");
+                try
                 {
-                    Log.log.Log(LogLevel.Information,  $"Successful DynamicImageAsync...");
-                    bmp = loaded;
-                }
-                else
-                {
-                    Log.log.Log(LogLevel.Information, $"Failed DynamicImageAsync...");
                     bmp = Image.Load<Rgba32>(imagePath);
+                    Log.log.Log(LogLevel.Information, $"Loaded local fallback image ({bmp.Width}x{bmp.Height})");
                 }
+                catch (Exception ex)
+                {
+                    Log.log.LogError($"Local fallback image failed to load from {imagePath}: {ex.Message}");
+                    return;
+                }
+            }
 
-                // x0 = bayerOffsetX;
-                // x1 = (bayerOffsetX + 1) & 1;
-                // y0 = bayerOffsetY;
-                // y1 = (bayerOffsetY + 1) & 1;
-
+            try
+            {
                 GetData getData = new GetData(MonochromeData);
                 switch (sensorType)
                 {
@@ -3168,7 +3188,7 @@ namespace ASCOM.Simulators
             }
             catch (Exception ex)
             {
-                Log.log.LogError(ex.Message);
+                Log.log.LogError($"ReadImageFile sampling loop failed: {ex}");
             }
         }
 
@@ -3393,6 +3413,7 @@ namespace ASCOM.Simulators
         private bool _useRemoteImage;
         private string _imageBaseUrl;
         private string _imageQueryFormat;
+        private int _remoteImageTimeoutSeconds = 10;
 
         /// <summary>
         /// Public helpers to set pointing before starting an exposure (optional).
@@ -3434,21 +3455,27 @@ namespace ASCOM.Simulators
         {
             if (!_useRemoteImage) return null;
 
+            int timeoutSeconds = _remoteImageTimeoutSeconds;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
             try
             {
                 var uri = BuildImageUri();
-                Log.log.Log(LogLevel.Information, $"DynamicImage Fetching: {uri}");
-                using var resp = await httpClient.GetAsync(uri, System.Net.Http.HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                Log.log.Log(LogLevel.Information, $"DynamicImage Fetching (timeout {timeoutSeconds}s): {uri}");
+                using var resp = await httpClient.GetAsync(uri, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
                     Log.log.Log(LogLevel.Information, $"DynamicImage Remote fetch failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
                     return null;
                 }
 
-                await using var s = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                // ImageSharp can load directly from stream
-                var img = await Image.LoadAsync<Rgba32>(s).ConfigureAwait(false);
+                await using var s = await resp.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
+                var img = await Image.LoadAsync<Rgba32>(s, cts.Token).ConfigureAwait(false);
                 return img;
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                Log.log.Log(LogLevel.Information, $"DynamicImage timed out after {timeoutSeconds}s, falling back to local image");
+                return null;
             }
             catch (Exception ex)
             {
