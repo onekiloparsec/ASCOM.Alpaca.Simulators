@@ -337,8 +337,7 @@ namespace ASCOM.Alpaca.Simulators
         {
             return ProcessRequest(() =>
             {
-                //Only supports 1 camera right now, in the future use DeviceNumber instead.
-                DriverManager.LoadCamera(0);
+                DriverManager.LoadCamera((int)DeviceNumber);
             },
             DeviceManager.ServerTransactionID, ClientID, ClientTransactionID, $"Restarting Camera {DeviceNumber} to a clean state.");
         }

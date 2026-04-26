@@ -379,7 +379,7 @@ namespace ASCOM.Simulators
             Log.LogMessage("Constructor", "Done");
         }
 
-        public string DeviceName { get => "Alpaca Camera Sim"; }
+        public string DeviceName { get => $"{DEVICE_NAME} - {DeviceNumber}"; }
         public int DeviceNumber { get; private set; }
         public string UniqueID { get; private set; }
 

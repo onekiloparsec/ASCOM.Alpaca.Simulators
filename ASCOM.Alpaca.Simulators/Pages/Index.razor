@@ -59,10 +59,12 @@
 <fieldset>
     <legend>Simulator Control</legend>
 
-    <label for="camera_restart">Camera</label>
-    <input id="camera_restart" type="button" value="Restart Simulation" @onclick="RestartCamera" />
-
-    <br />
+    @foreach (var camera in DeviceManager.Cameras.Keys.OrderBy(id => id))
+    {
+        <label for=@($"camera_restart_{camera}")>@GetCameraLabel(camera)</label>
+        <input id=@($"camera_restart_{camera}") type="button" value="Restart Simulation" @onclick="@(() => RestartCamera(camera))" />
+        <br />
+    }
 
     <label for="covercalibrator_restart">CoverCalibrator</label>
     <input id="covercalibrator_restart" type="button" value="Restart Simulation" @onclick="RestartCoverCalibrator" />
@@ -174,9 +176,14 @@
 #endif
     }
 
-    void RestartCamera()
+    string GetCameraLabel(int deviceNumber)
     {
-        DriverManager.LoadCamera(0);
+        return deviceNumber == 0 ? "Camera" : $"Guiding Camera {deviceNumber}";
+    }
+
+    void RestartCamera(int deviceNumber)
+    {
+        DriverManager.LoadCamera(deviceNumber);
     }
 
     void RestartCoverCalibrator()

@@ -12,7 +12,7 @@
             @foreach (var key in ASCOM.Alpaca.DeviceManager.Cameras)
             {
                 <NavLink class="nav-link" href=@GetSetupURL("camera", key.Key) Match="NavLinkMatch.All">
-                    <span class="oi oi-camera-slr" aria-hidden="true"></span> @GetDisplayName("Camera", key.Key)
+                    <span class="oi oi-camera-slr" aria-hidden="true"></span> @GetCameraLabel(key.Key)
                 </NavLink>
             }
         </li>
@@ -143,6 +143,11 @@
             return dev;
         }
         return $"{dev} - {index}";
+    }
+
+    string GetCameraLabel(int index)
+    {
+        return index == 0 ? "Camera" : $"Guiding Camera - {index}";
     }
 
     void Shutdown()
