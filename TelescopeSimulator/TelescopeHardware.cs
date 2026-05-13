@@ -2324,7 +2324,11 @@ namespace ASCOM.Simulators
                 // Current telescope pointing
                 double raHours = currentRaDec.X; // 0..24
                 double decDeg = currentRaDec.Y;  // -90..+90
-                double focalMm = focalLength;    // 0 if not configured; Camera uses default FOV when 0
+                // focalLength is stored in METRES (ASCOM ITelescope.FocalLength spec) but
+                // the Camera's BuildImageUri formula uses µm-over-mm, so cross the unit
+                // boundary here. 0 stays 0 — Camera takes that as "no telescope attached"
+                // and falls back to its 0.5° default FOV.
+                double focalMm = focalLength * 1000.0;
                 int pierSide = pointingState == PointingState.Normal ? 0 : 1;
 
                 cb(raHours, decDeg, focalMm, pierSide);

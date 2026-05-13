@@ -1629,10 +1629,17 @@ namespace ASCOM.Simulators
             // Push initial pointing (incl. focal length + pier side so the camera's first
             // fetched image already has the right FOV/orientation without waiting for the
             // first slew to trigger NotifyPointingChanged).
+            //
+            // TelescopeHardware.FocalLength is in METRES per the ASCOM ITelescope spec
+            // (the simulator's default of 1.26 in SharedResources.INSTRUMENT_FOCAL_LENGTH
+            // is "1.26 m, f/6.3 instrument"), but Camera.SetPointing expects millimetres
+            // because BuildImageUri's pixel_scale formula uses µm-over-mm. Convert here so
+            // the (telescope-side, m) → (camera-side, mm) crossing is explicit and lives
+            // alongside the property access that defines the source unit.
             TelescopeHardware.OnPointingChanged?.Invoke(
                 RightAscension,
                 Declination,
-                TelescopeHardware.FocalLength,
+                TelescopeHardware.FocalLength * 1000.0,
                 TelescopeHardware.SideOfPier == PointingState.Normal ? 0 : 1);
         }
 
@@ -1640,7 +1647,8 @@ namespace ASCOM.Simulators
         private void TryUpdateCameraPointing()
         {
             if (_cameras.Count == 0) return;
-            double focalMm = TelescopeHardware.FocalLength;
+            // metres → millimetres; see AttachCamera comment for the unit-crossing rationale.
+            double focalMm = TelescopeHardware.FocalLength * 1000.0;
             int pierSide = TelescopeHardware.SideOfPier == PointingState.Normal ? 0 : 1;
             foreach (var cam in _cameras)
             {
