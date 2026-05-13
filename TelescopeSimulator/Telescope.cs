@@ -1611,13 +1611,13 @@ namespace ASCOM.Simulators
 
             // Single shared callback that fans out to every attached camera.
             // Reassigning is fine — we always dispatch to the full _cameras list.
-            TelescopeHardware.OnPointingChanged = (raHours, decDeg) =>
+            TelescopeHardware.OnPointingChanged = (raHours, decDeg, focalMm, pierSide) =>
             {
                 foreach (var cam in _cameras)
                 {
                     try
                     {
-                        cam.SetPointing(raHours, decDeg);
+                        cam.SetPointing(raHours, decDeg, focalMm, pierSide);
                     }
                     catch (Exception ex)
                     {
@@ -1626,19 +1626,27 @@ namespace ASCOM.Simulators
                 }
             };
 
-            // Push initial pointing
-            TelescopeHardware.OnPointingChanged?.Invoke(RightAscension, Declination);
+            // Push initial pointing (incl. focal length + pier side so the camera's first
+            // fetched image already has the right FOV/orientation without waiting for the
+            // first slew to trigger NotifyPointingChanged).
+            TelescopeHardware.OnPointingChanged?.Invoke(
+                RightAscension,
+                Declination,
+                TelescopeHardware.FocalLength,
+                TelescopeHardware.SideOfPier == PointingState.Normal ? 0 : 1);
         }
 
         // Centralized helper to send pointing to every attached camera.
         private void TryUpdateCameraPointing()
         {
             if (_cameras.Count == 0) return;
+            double focalMm = TelescopeHardware.FocalLength;
+            int pierSide = TelescopeHardware.SideOfPier == PointingState.Normal ? 0 : 1;
             foreach (var cam in _cameras)
             {
                 try
                 {
-                    cam.SetPointing(RightAscension, Declination);
+                    cam.SetPointing(RightAscension, Declination, focalMm, pierSide);
                 }
                 catch (Exception ex)
                 {

@@ -302,6 +302,13 @@ namespace ASCOM.Simulators
 
         private double lastRightAscensionDeg; // 0-360
         private double lastDeclinationDeg;      // -90..+90
+        // Pushed from the attached Telescope. 0 means "unknown / no telescope attached" —
+        // BuildImageUri falls back to the legacy 0.5° fixed FOV in that case so the camera
+        // remains usable in standalone test setups without a mount.
+        private double lastFocalLengthMm;
+        // 0 = Normal (pierEast), 1 = ThroughThePole (pierWest). Drives a 180° rotation of
+        // the fetched image so meridian flips produce visibly different frames.
+        private int lastPierSide;
 
         private int[,] imageArray;
         private object[,] imageArrayVariant;
@@ -2680,7 +2687,23 @@ namespace ASCOM.Simulators
             string imageBaseUrl = Profile.GetValue(STR_ImageBaseUrl, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits");
             _useRemoteImage = useRemoteImage && !string.IsNullOrWhiteSpace(imageBaseUrl);
             _imageBaseUrl = imageBaseUrl?.TrimEnd('/');
-            _imageQueryFormat = "?hips=CDS/P/DSS2/color&ra={ra}&dec={dec}&fov=0.5&width={width}&height={height}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg";
+            // {fov} (degrees) and {rotation_angle} (degrees) are computed in BuildImageUri()
+            // from the attached telescope's focal length + camera pixel/sensor geometry +
+            // pier side. The legacy hardcoded fov=0.5/rotation=0.0 silently disconnected
+            // the simulated optics from the image content and broke any client doing
+            // hint-based plate solving against the simulator. Profiles written before
+            // this change are migrated below.
+            _imageQueryFormat = "?hips=CDS/P/DSS2/color&ra={ra}&dec={dec}&fov={fov}&width={width}&height={height}&projection=TAN&coordsys=icrs&rotation_angle={rotation_angle}&format=jpg";
+            // One-shot migration: older profile entries had fov / rotation_angle baked as
+            // literal numbers rather than tokens. Replace those literals so the new
+            // geometry-aware substitution actually runs. Idempotent on already-tokenised values.
+            string storedFormat = Profile.GetValue(STR_ImageQueryFormat, _imageQueryFormat);
+            if (storedFormat.Contains("fov=0.5") || storedFormat.Contains("rotation_angle=0.0"))
+            {
+                storedFormat = System.Text.RegularExpressions.Regex.Replace(storedFormat, "fov=[^&]+", "fov={fov}");
+                storedFormat = System.Text.RegularExpressions.Regex.Replace(storedFormat, "rotation_angle=[^&]+", "rotation_angle={rotation_angle}");
+            }
+            _imageQueryFormat = storedFormat;
             _remoteImageTimeoutSeconds = Math.Max(1, Convert.ToInt32(Profile.GetValue(STR_RemoteImageTimeoutSeconds, "10"), CultureInfo.InvariantCulture));
             Log.log.Log(LogLevel.Information, $"UseRemoteImage={_useRemoteImage}, BaseUrl={_imageBaseUrl}, TimeoutSeconds={_remoteImageTimeoutSeconds}, QueryFormat={_imageQueryFormat}");
 
@@ -3418,29 +3441,71 @@ namespace ASCOM.Simulators
         /// <summary>
         /// Public helpers to set pointing before starting an exposure (optional).
         /// If not set, defaults will be used and remote fetch will still work if enabled.
+        ///
+        /// focalLengthMm and pierSide are pushed by the attached Telescope.AttachCamera
+        /// wiring. focalLengthMm = 0 means "no telescope attached / unknown"; BuildImageUri
+        /// then falls back to the legacy 0.5° FOV so camera-only test setups keep working.
+        /// pierSide is 0 for Normal (pierEast), 1 for ThroughThePole (pierWest), driving a
+        /// 180° rotation of the fetched image after a meridian flip.
         /// </summary>
-        public void SetPointing(double rightAscensionHours, double declinationDeg)
+        public void SetPointing(double rightAscensionHours, double declinationDeg,
+                                double focalLengthMm = 0, int pierSide = 0)
         {
             lastRightAscensionDeg = rightAscensionHours * 15;
             lastDeclinationDeg = declinationDeg;
+            lastFocalLengthMm = focalLengthMm;
+            lastPierSide = pierSide;
 
-            Log.LogMessage("SetPointing", $"Pointing update -> RA:{rightAscensionHours}h DEC:{declinationDeg}°");
+            Log.LogMessage(
+                "SetPointing",
+                $"Pointing update -> RA:{rightAscensionHours}h DEC:{declinationDeg}° focal:{focalLengthMm}mm pier:{pierSide}");
         }
 
         /// <summary>
         /// Builds a URL using base + query format and current camera/image parameters.
         /// Supported tokens in the query format:
-        /// {ra} hours, {dec} deg, {fov} deg, {w} pixels, {h} pixels, {binX}, {binY}
+        /// {ra} deg, {dec} deg, {fov} deg, {width} pixels, {height} pixels, {rotation_angle} deg
+        ///
+        /// fov is derived from the attached telescope's focal length and this camera's
+        /// pixel/sensor geometry so the fetched image's on-sky scale matches what a real
+        /// optic at the same configuration would produce. Without that consistency,
+        /// hint-based plate solvers (astrometry.net, ASTAP, …) reject every candidate
+        /// match because the scale hint and the actual quad sizes can't agree.
+        ///
+        /// rotation_angle is driven by the mount's pier side, so a German equatorial
+        /// after a meridian flip returns a 180°-rotated image — the lightest possible
+        /// orientation realism for testing orientation-sensitive code paths.
         /// </summary>
         private Uri BuildImageUri()
         {
+            // FOV: pixel_scale_arcsec_per_px = pixel_size_um * 206.265 / focal_length_mm
+            //      fov_width_deg = pixel_scale * unbinned_sensor_width_px / 3600
+            // Width/height tokens stay at the FULL unbinned sensor size — the simulator's
+            // downstream pipeline applies binning to the fetched image array, so the
+            // remote fetch must be at full sensor resolution.
+            double fovDeg = 0.5; // legacy default for the no-telescope-attached case
+            if (lastFocalLengthMm > 0 && pixelSizeX > 0 && cameraXSize > 0)
+            {
+                double pixelScaleArcsec = pixelSizeX * 206.265 / lastFocalLengthMm;
+                fovDeg = pixelScaleArcsec * cameraXSize / 3600.0;
+                // Clamp to hips2fits' practical range — outside this the service either
+                // returns degenerate data or rejects the request.
+                if (fovDeg < 0.01) fovDeg = 0.01;
+                if (fovDeg > 60.0) fovDeg = 60.0;
+            }
+
+            // Pier side 1 = ThroughThePole / pierWest → image rotated 180° relative to
+            // pier-east. Real GEMs would also mirror about an axis depending on optical
+            // train; rotation alone covers the dominant visible difference.
+            double rotationDeg = (lastPierSide == 1) ? 180.0 : 0.0;
+
             string q = _imageQueryFormat
                 .Replace("{ra}", Uri.EscapeDataString(lastRightAscensionDeg.ToString(CultureInfo.InvariantCulture)))
                 .Replace("{dec}", Uri.EscapeDataString(lastDeclinationDeg.ToString(CultureInfo.InvariantCulture)))
+                .Replace("{fov}", Uri.EscapeDataString(fovDeg.ToString("0.######", CultureInfo.InvariantCulture)))
                 .Replace("{width}", Uri.EscapeDataString(cameraXSize.ToString(CultureInfo.InvariantCulture)))
-                .Replace("{height}", Uri.EscapeDataString(cameraYSize.ToString(CultureInfo.InvariantCulture)));
-//                .Replace("{binX}", Uri.EscapeDataString(binX.ToString(CultureInfo.InvariantCulture)))
-//                .Replace("{binY}", Uri.EscapeDataString(binY.ToString(CultureInfo.InvariantCulture)));
+                .Replace("{height}", Uri.EscapeDataString(cameraYSize.ToString(CultureInfo.InvariantCulture)))
+                .Replace("{rotation_angle}", Uri.EscapeDataString(rotationDeg.ToString("0.######", CultureInfo.InvariantCulture)));
 
             string url = $"{_imageBaseUrl}{q}";
             return new Uri(url, UriKind.Absolute);

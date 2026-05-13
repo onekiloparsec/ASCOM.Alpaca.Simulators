@@ -320,8 +320,12 @@ namespace ASCOM.Simulators
         public static Vector rateMoveAxes = new Vector();
 
         // Callback to inform consumers (e.g., Camera) about pointing changes.
-        // Signature: ra (hours), dec (deg), fov (deg)
-        public static Action<double, double> OnPointingChanged;
+        // Signature: ra (hours), dec (deg), focalLengthMm (mm, 0 if unknown),
+        //            pierSide (0 = Normal / pierEast, 1 = ThroughThePole / pierWest).
+        // The camera uses focalLengthMm + its own pixel size + sensor size to compute the
+        // hips2fits FOV so the fetched image matches the simulated optics; pierSide
+        // drives a 180° rotation so meridian flips produce visibly flipped images.
+        public static Action<double, double, double, int> OnPointingChanged;
 
         #endregion Public variables
 
@@ -2320,8 +2324,10 @@ namespace ASCOM.Simulators
                 // Current telescope pointing
                 double raHours = currentRaDec.X; // 0..24
                 double decDeg = currentRaDec.Y;  // -90..+90
+                double focalMm = focalLength;    // 0 if not configured; Camera uses default FOV when 0
+                int pierSide = pointingState == PointingState.Normal ? 0 : 1;
 
-                cb(raHours, decDeg);
+                cb(raHours, decDeg, focalMm, pierSide);
             }
             catch (Exception ex)
             {
