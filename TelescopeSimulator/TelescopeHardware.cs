@@ -320,7 +320,7 @@ namespace ASCOM.Simulators
         public static Vector rateMoveAxes = new Vector();
 
         // Callback to inform consumers (e.g., Camera) about pointing changes.
-        // Signature: ra (hours), dec (deg), focalLengthMm (mm, 0 if unknown),
+        // Signature: ra (hours, J2000), dec (deg, J2000), focalLengthMm (mm, 0 if unknown),
         //            pierSide (0 = Normal / pierEast, 1 = ThroughThePole / pierWest).
         // The camera uses focalLengthMm + its own pixel size + sensor size to compute the
         // hips2fits FOV so the fetched image matches the simulated optics; pierSide
@@ -2307,10 +2307,45 @@ namespace ASCOM.Simulators
             NotifyPointingChanged();
         }
 
+        // Reused across ticks: UpdatePositions runs on every timer tick, and a
+        // Transform is not free to build. Guarded by its own lock because the
+        // initial push from Telescope.AttachCamera runs on another thread.
+        private static readonly Transform s_cameraTransform = new Transform { Refraction = false };
+        private static readonly object s_cameraTransformLock = new object();
+
+        /// <summary>
+        /// The current pointing in J2000, whatever equatorial system the mount
+        /// reports in.
+        ///
+        /// The cameras fetch their images from hips2fits with coordsys=icrs, i.e.
+        /// J2000. The mount's own RA/Dec are of date when EquatorialSystem is
+        /// topocentric (the default), and handing those over unconverted put every
+        /// frame a precession away from the target: about 11' at M101 in 2026,
+        /// a whole field of view at 1.26 m focal length.
+        /// </summary>
+        private static (double raHours, double decDeg) PointingInJ2000()
+        {
+            double raHours = currentRaDec.X; // 0..24
+            double decDeg = currentRaDec.Y;  // -90..+90
+            if (equatorialSystem != 1) // 1 = topocentric; J2000 (2) is already right
+            {
+                return (raHours, decDeg);
+            }
+            lock (s_cameraTransformLock)
+            {
+                s_cameraTransform.SiteLatitude = latitude;
+                s_cameraTransform.SiteLongitude = longitude;
+                s_cameraTransform.SiteElevation = elevation;
+                s_cameraTransform.JulianDateUTC = 0; // now, from the clock
+                s_cameraTransform.SetTopocentric(raHours, decDeg);
+                return (s_cameraTransform.RAJ2000, s_cameraTransform.DecJ2000);
+            }
+        }
+
         /// <summary>
         /// Notify upstream of the change of position.
         /// </summary>
-        private static void NotifyPointingChanged()
+        internal static void NotifyPointingChanged()
         {
             try
             {
@@ -2321,9 +2356,8 @@ namespace ASCOM.Simulators
                     return;
                 }
 
-                // Current telescope pointing
-                double raHours = currentRaDec.X; // 0..24
-                double decDeg = currentRaDec.Y;  // -90..+90
+                // Current telescope pointing, in the frame the cameras ask hips2fits for.
+                var (raHours, decDeg) = PointingInJ2000();
                 // focalLength is stored in METRES (ASCOM ITelescope.FocalLength spec) but
                 // the Camera's BuildImageUri formula uses µm-over-mm, so cross the unit
                 // boundary here. 0 stays 0 — Camera takes that as "no telescope attached"
