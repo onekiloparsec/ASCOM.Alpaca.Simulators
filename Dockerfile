@@ -51,4 +51,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 EXPOSE 32323
 EXPOSE 32227/udp
 
+# The app's content root resolves to the dotnet host's folder in a container
+# (ASCOM_COM is always defined, see Program.cs), so appsettings.json is never
+# read and every Alpaca request is logged at Information, ~7 lines each. Set
+# the level here instead: the simulator's own messages stay, the request log goes.
+ENV Logging__LogLevel__Microsoft.AspNetCore=Warning
+
 CMD ["dotnet", "ascom.alpaca.simulators.dll", "--urls=http://0.0.0.0:32323"]
